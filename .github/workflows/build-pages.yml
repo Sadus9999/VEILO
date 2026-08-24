@@ -1,0 +1,54 @@
+name: Build Veilo demo pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-pages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PDF renderer
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      - name: Download test PDF
+        run: |
+          curl -L --fail --retry 3 \
+            'https://drive.usercontent.google.com/download?id=1o4T3_VxeAe77I_uxY06uk8byRm1ukaYw&export=download&confirm=t' \
+            -o VEILO_TEST.pdf
+          test -s VEILO_TEST.pdf
+
+      - name: Render and bundle pages
+        run: |
+          rm -rf .veilo-pages
+          mkdir .veilo-pages
+          pdftoppm -jpeg -r 55 -jpegopt quality=52,optimize=y,progressive=y VEILO_TEST.pdf .veilo-pages/page
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, json
+
+          pages = sorted(Path('.veilo-pages').glob('page-*.jpg'))
+          urls = ['data:image/jpeg;base64,' + base64.b64encode(p.read_bytes()).decode() for p in pages]
+          split = (len(urls) + 1) // 2
+          Path('pages-a.js').write_text('window.VEILO_PAGES = ' + json.dumps(urls[:split]) + ';\n', encoding='utf-8')
+          Path('pages-b.js').write_text('window.VEILO_PAGES.push(...' + json.dumps(urls[split:]) + ');\n', encoding='utf-8')
+          print(f'Bundled {len(urls)} pages')
+          PY
+
+      - name: Commit generated page bundles
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add pages-a.js pages-b.js
+          if git diff --cached --quiet; then
+            echo 'No generated changes.'
+          else
+            git commit -m 'Build Veilo test document pages'
+            git push
+          fi
