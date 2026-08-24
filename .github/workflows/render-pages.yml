@@ -22,12 +22,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y poppler-utils webp
+          python -m pip install --upgrade gdown
 
       - name: Download VEILO_TEST.pdf
         run: |
-          curl -L --fail --retry 3 \
-            -o VEILO_TEST.pdf \
-            'https://drive.usercontent.google.com/download?id=1o4T3_VxeAe77I_uxY06uk8byRm1ukaYw&export=download&confirm=t'
+          python -m gdown 'https://drive.google.com/uc?id=1o4T3_VxeAe77I_uxY06uk8byRm1ukaYw' -O VEILO_TEST.pdf
+          test -s VEILO_TEST.pdf
+          file VEILO_TEST.pdf
           pdfinfo VEILO_TEST.pdf | head -20
 
       - name: Render document pages
@@ -36,12 +37,14 @@ jobs:
           mkdir -p pages _rendered
           pdftoppm -jpeg -r 120 -jpegopt quality=92,optimize=y VEILO_TEST.pdf _rendered/page
           i=1
-          for f in $(find _rendered -maxdepth 1 -name 'page-*.jpg' | sort -V); do
+          while IFS= read -r f; do
             printf -v n '%02d' "$i"
             cwebp -quiet -q 72 -m 6 "$f" -o "pages/page-$n.webp"
             i=$((i+1))
-          done
-          test "$(find pages -name '*.webp' | wc -l)" -eq 26
+          done < <(find _rendered -maxdepth 1 -name 'page-*.jpg' | sort -V)
+          count="$(find pages -name '*.webp' | wc -l)"
+          echo "Rendered pages: $count"
+          test "$count" -eq 26
           ls -lh pages | head
 
       - name: Commit rendered pages
@@ -49,5 +52,9 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add pages
-          git commit -m 'Add rendered VEILO_TEST pages' || exit 0
+          if git diff --cached --quiet; then
+            echo 'No page changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Add rendered VEILO_TEST pages'
           git push
